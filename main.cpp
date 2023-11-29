@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <random>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -147,7 +149,7 @@ void DrawLine(std::vector<RGB>& image, int width, int height, int x1, int y1, in
     // if (x1,y1) is A and (x2,y2) is B, get a normalized vector from A to B called AB
     float ABX = float(x2 - x1);
     float ABY = float(y2 - y1);
-    float ABLen = std::sqrtf(ABX*ABX + ABY * ABY);
+    float ABLen = std::sqrt(ABX*ABX + ABY * ABY);
     ABX /= ABLen;
     ABY /= ABLen;
 
@@ -253,6 +255,128 @@ float Fract(float x)
     return x - floor(x);
 }
 
+void NumberlineAndCircleTestBN(const char* baseFileName)
+{
+    static const int c_numFrames = 16;
+
+    static const int c_circleImageSize = 256;
+    static const int c_circleRadius = 120;
+
+    static const int c_numberlineImageWidth = c_circleImageSize;
+    static const int c_numberlineImageHeight = c_numberlineImageWidth / 4;
+    static const int c_numberlineStartX = c_numberlineImageWidth / 10;
+    static const int c_numberlineSizeX = c_numberlineImageWidth * 8 / 10;
+    static const int c_numberlineEndX = c_numberlineStartX + c_numberlineSizeX;
+    static const int c_numberlineLineStartY = (c_numberlineImageHeight / 2) - 10;
+    static const int c_numberlineLineEndY = (c_numberlineImageHeight / 2) + 10;
+
+    std::mt19937 rng(0x1337beef);
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+    std::vector<float> values;
+    char fileName[256];
+    for (int frame = 0; frame < c_numFrames; ++frame)
+    {
+        // Mitchell's best candidate
+        if (frame > 0)
+        {
+            int candidateCount = frame + 1;
+            float bestCandidate = 0.0f;
+            float bestCandidateScore = -1.0f;
+            for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex)
+            {
+                float candidate = dist(rng);
+
+                float minDist = FLT_MAX;
+                for (float f : values)
+                {
+                    float dist = std::abs(f - candidate);
+                    if (dist > 0.5f)
+                        dist = 1.0f - dist;
+                    minDist = std::min(minDist, dist);
+                }
+
+                if (minDist > bestCandidateScore)
+                {
+                    bestCandidateScore = minDist;
+                    bestCandidate = candidate;
+                }
+            }
+            values.push_back(bestCandidate);
+        }
+        else
+            values.push_back(0.0f);
+
+        std::vector<RGB> circleImageLeft(c_circleImageSize * c_circleImageSize, RGB{ 255,255,255 });
+        std::vector<RGB> circleImageRight(c_circleImageSize * c_circleImageSize, RGB{ 255,255,255 });
+        std::vector<RGB> numberlineImageLeft(c_numberlineImageWidth * c_numberlineImageHeight, RGB{ 255, 255, 255 });
+        std::vector<RGB> numberlineImageRight(c_numberlineImageWidth * c_numberlineImageHeight, RGB{ 255, 255, 255 });
+
+        DrawCircle(circleImageLeft, c_circleImageSize, c_circleImageSize, 128, 128, c_circleRadius, RGB{ 0,0,0 });
+        DrawCircle(circleImageRight, c_circleImageSize, c_circleImageSize, 128, 128, c_circleRadius, RGB{ 0,0,0 });
+
+        DrawLine(numberlineImageLeft, c_numberlineImageWidth, c_numberlineImageHeight, c_numberlineStartX, c_numberlineImageHeight / 2, c_numberlineEndX, c_numberlineImageHeight / 2, RGB{ 0, 0, 0 });
+        DrawLine(numberlineImageRight, c_numberlineImageWidth, c_numberlineImageHeight, c_numberlineStartX, c_numberlineImageHeight / 2, c_numberlineEndX, c_numberlineImageHeight / 2, RGB{ 0, 0, 0 });
+
+        for (int sample = 0; sample <= frame; ++sample)
+        {
+            float value = values[sample];
+
+            float angle = value * (float)c_pi * 2.0f;
+
+            int targetX = int(cos(angle) * float(c_circleRadius)) + 128;
+            int targetY = int(sin(angle) * float(c_circleRadius)) + 128;
+
+            unsigned char percentColor = (unsigned char)(255.0f - 255.0f * float(sample) / float(c_numFrames - 1));
+
+            RGB sampleColor = (sample == frame) ? RGB{ 255, 0, 0 } : RGB{ 192, percentColor, 0 };
+
+            DrawLine(circleImageLeft, c_circleImageSize, c_circleImageSize, 128, 128, targetX, targetY, sampleColor);
+
+            if (sample >= c_numFrames / 2)
+                DrawLine(circleImageRight, c_circleImageSize, c_circleImageSize, 128, 128, targetX, targetY, sampleColor);
+
+            targetX = int(value * float(c_numberlineSizeX)) + c_numberlineStartX;
+            DrawLine(numberlineImageLeft, c_numberlineImageWidth, c_numberlineImageHeight, targetX, c_numberlineLineStartY, targetX, c_numberlineLineEndY, sampleColor);
+
+            if (sample >= c_numFrames / 2)
+                DrawLine(numberlineImageRight, c_numberlineImageWidth, c_numberlineImageHeight, targetX, c_numberlineLineStartY, targetX, c_numberlineLineEndY, sampleColor);
+        }
+
+        int outImageW = c_circleImageSize * 2;
+        int outImageH = c_circleImageSize + c_numberlineImageHeight;
+        std::vector<RGB> outputImage(outImageW * outImageH);
+
+        RGB* dest = outputImage.data();
+        const RGB* srcLeft = circleImageLeft.data();
+        const RGB* srcRight = circleImageRight.data();
+        for (int i = 0; i < c_circleImageSize; ++i)
+        {
+            memcpy(dest, srcLeft, c_circleImageSize * 3);
+            dest += c_circleImageSize;
+            srcLeft += c_circleImageSize;
+            memcpy(dest, srcRight, c_circleImageSize * 3);
+            dest += c_circleImageSize;
+            srcRight += c_circleImageSize;
+        }
+
+        srcLeft = numberlineImageLeft.data();
+        srcRight = numberlineImageRight.data();
+        for (int i = 0; i < c_numberlineImageHeight; ++i)
+        {
+            memcpy(dest, srcLeft, c_circleImageSize * 3);
+            dest += c_circleImageSize;
+            srcLeft += c_circleImageSize;
+            memcpy(dest, srcRight, c_circleImageSize * 3);
+            dest += c_circleImageSize;
+            srcRight += c_circleImageSize;
+        }
+
+        sprintf_s(fileName, "out/%s_%i.png", baseFileName, frame);
+        stbi_write_png(fileName, outImageW, outImageH, 3, outputImage.data(), outImageW * 3);
+    }
+}
+
 void NumberlineAndCircleTest(const char* baseFileName, float irrational)
 {
     static const int c_numFrames = 16;
@@ -344,6 +468,7 @@ void NumberlineAndCircleTest(const char* baseFileName, float irrational)
 
 int main(int argc, char** argv)
 {
+    NumberlineAndCircleTestBN("blue");
     NumberlineAndCircleTest("golden", (float)c_goldenRatioConjugate);
     NumberlineAndCircleTest("pi", (float)c_pi);
     NumberlineAndCircleTest("sqrt2", sqrt(2.0f));
